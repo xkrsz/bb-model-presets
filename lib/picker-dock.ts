@@ -21,10 +21,17 @@ function findPickerGroup(anchor: HTMLElement): HTMLElement | null {
   return group !== null && !group.contains(anchor) ? group : null;
 }
 
+export interface PickerDock {
+  /** Node at the end of the picker group to portal into. */
+  host: HTMLElement;
+  /** The picker group itself. */
+  group: HTMLElement;
+}
+
 export function usePickerDock(
   anchorRef: RefObject<HTMLElement | null>,
-): HTMLElement | null {
-  const [dock, setDock] = useState<HTMLElement | null>(null);
+): PickerDock | null {
+  const [dock, setDock] = useState<PickerDock | null>(null);
 
   useEffect(() => {
     const anchor = anchorRef.current;
@@ -56,7 +63,7 @@ export function usePickerDock(
       }
       group.appendChild(host);
       groupObserver.observe(group, { childList: true });
-      setDock(host);
+      setDock({ host, group });
     };
 
     attach();

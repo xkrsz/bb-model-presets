@@ -8,6 +8,7 @@ import { MAX_PRESETS } from "@/shared/constants";
 import { describePreset, usePresets, useProviderName } from "@/hooks/use-presets";
 import { registerPresetMenu } from "@/lib/menu-registry";
 import { usePickerDock } from "@/lib/picker-dock";
+import { usePickerPopover, whenDetached } from "@/lib/picker-popover";
 import {
   currentPreset,
   presetSelection,
@@ -32,6 +33,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Icon } from "@/components/ui/icon";
+import { PickerPresets } from "@/components/picker-presets";
 import { PresetDialog } from "@/components/preset-dialog";
 import { PresetManager } from "@/components/preset-manager";
 import { cn } from "@/lib/utils";
@@ -64,8 +66,10 @@ export function PresetAction() {
     [composer.key, dialogOpen],
   );
 
+  // Resolves once whatever was open when the preset was picked has gone, so
+  // its focus return doesn't pull the caret back out of the composer.
   const apply = useCallback(
-    async (preset: Preset) => {
+    async (preset: Preset, closed?: Promise<void>) => {
       setOpen(false);
       try {
         const settled = await composer.setSelection(presetSelection(preset));
@@ -80,11 +84,41 @@ export function PresetAction() {
       } catch (cause) {
         toast.error(errorMessage(cause));
       } finally {
+        if (closed !== undefined) await closed;
         composer.focus();
       }
     },
     [composer, providerName, rpc, refetch],
   );
+
+  const picker = usePickerPopover(dock?.group ?? null, !dialogOpen);
+  const applyFromPicker = useCallback(
+    (preset: Preset) => {
+      if (picker === null) return;
+      const closed = whenDetached(picker.content);
+      picker.close();
+      void apply(preset, closed);
+    },
+    [picker, apply],
+  );
+
+  // ⌥1–⌥9 while the picker is open; plain digits belong to its search box.
+  useEffect(() => {
+    if (picker === null) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!event.altKey || event.metaKey || event.ctrlKey || event.shiftKey) {
+        return;
+      }
+      const digit = /^Digit([1-9])$/.exec(event.code);
+      const preset = digit === null ? undefined : presets[Number(digit[1]) - 1];
+      if (preset === undefined) return;
+      event.preventDefault();
+      event.stopPropagation();
+      applyFromPicker(preset);
+    };
+    picker.content.addEventListener("keydown", onKeyDown, true);
+    return () => picker.content.removeEventListener("keydown", onKeyDown, true);
+  }, [picker, presets, applyFromPicker]);
 
   const create = async (fields: PresetFields) => {
     const preset = await rpc.call("presets_create", fields);
@@ -188,7 +222,23 @@ export function PresetAction() {
       <span ref={anchorRef} className={dock === null ? "contents" : "hidden"}>
         {dock === null ? button : null}
       </span>
-      {dock === null ? null : createPortal(button, dock)}
+      {dock === null ? null : createPortal(button, dock.host)}
+      {picker === null
+        ? null
+        : createPortal(
+            <PickerPresets
+              presets={presets}
+              currentId={current?.id ?? null}
+              canCreate={presets.length < MAX_PRESETS}
+              providerName={providerName}
+              onApply={applyFromPicker}
+              onCreate={() => {
+                picker.close();
+                setDialog({ kind: "create" });
+              }}
+            />,
+            picker.host,
+          )}
       {dialog?.kind === "create" ? (
         <PresetDialog
           open

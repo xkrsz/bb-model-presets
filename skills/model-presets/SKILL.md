@@ -6,8 +6,8 @@ description: Manage bb model presets (provider, model, effort, speed, thread ins
 # Model presets
 
 Presets live in the Model Presets plugin. The user applies them from the
-New thread composer (the button after the model picker, or `Mod+Shift+L`
-then `1`–`9`). Agents can't apply a preset to a composer. The CLI only
+New thread composer (the button after the model picker, `Mod+Shift+L` then
+`1`–`9`, or the Presets list at the top of the model picker, `⌥1`–`⌥9`). Agents can't apply a preset to a composer. The CLI only
 manages the list and reads thread links.
 
 ```

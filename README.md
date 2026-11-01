@@ -23,6 +23,10 @@ or from the `bb-community` marketplace once listed: `bb plugin install model-pre
   thread composer. It shows the preset that matches the current selection and
   opens a numbered menu of presets, plus "New preset from current selection…"
   and "Manage presets…" (reorder, edit, delete).
+- The same presets are listed at the top of bb's own model picker popover,
+  above the provider tabs. Click one, or press `⌥1`–`⌥9` (`Alt+1`–`Alt+9`)
+  while the picker is open; plain digits still go to its search box. "Save
+  current…" there opens the new-preset dialog.
 - Shortcut: `Mod+Shift+L` opens the menu from the New thread composer; press
   `1`–`9` to apply that preset (keys follow the menu order). It is a bb
   composer command, so you rebind it under Settings → Keyboard ("Open model
@@ -62,6 +66,10 @@ bb model-presets remove <id>
   `data-promptbox-*` attributes and portals the button into it. When the
   markup isn't there (compact layout, another composer plugin, a bb change)
   the button stays in the regular plugin action slot next to send.
+- `lib/picker-popover.ts` watches the picker's trigger. While it is
+  expanded, its `aria-controls` names the popover content, and the plugin
+  prepends a node there and portals the preset list into it. On the mobile
+  drawer, or if that markup changes, the picker is left alone.
 - `app.tsx` registers the "Open model presets" composer command; bb routes it
   to the focused composer and `lib/menu-registry.ts` opens that composer's
   menu.
