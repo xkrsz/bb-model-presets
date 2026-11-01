@@ -233,8 +233,11 @@ export function PresetAction() {
               providerName={providerName}
               onApply={applyFromPicker}
               onCreate={() => {
+                // Open after the popover is gone, or its focus return to
+                // the picker trigger lands after the dialog's autofocus.
+                const closed = whenDetached(picker.content);
                 picker.close();
-                setDialog({ kind: "create" });
+                void closed.then(() => setDialog({ kind: "create" }));
               }}
             />,
             picker.host,

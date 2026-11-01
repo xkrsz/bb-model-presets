@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import {
   experimental_ProviderModelPicker as ProviderModelPicker,
@@ -7,6 +7,7 @@ import {
 } from "@get-bb/plugin-sdk/app";
 import type { Preset, PresetFields } from "@/server";
 import { MAX_INSTRUCTIONS_LENGTH } from "@/shared/constants";
+import { usePresetLabel } from "@/lib/preset-name";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -60,6 +61,24 @@ export function PresetDialog({
   const [draft, setDraft] = useState<PresetFields>(() =>
     editing === null ? emptyDraft(seed) : draftFromPreset(editing),
   );
+  // New presets take the model + effort label until the user types a name.
+  const [nameEdited, setNameEdited] = useState(editing !== null);
+  const nameRef = useRef<HTMLInputElement>(null);
+  const autoName = usePresetLabel(
+    draft.providerId,
+    draft.model,
+    draft.reasoningLevel,
+    seed?.projectId ?? undefined,
+  );
+  useEffect(() => {
+    if (!nameEdited && autoName !== null) {
+      setDraft((current) => ({ ...current, name: autoName }));
+      // Keep the suggestion selected so typing replaces it.
+      requestAnimationFrame(() => {
+        if (document.activeElement === nameRef.current) nameRef.current?.select();
+      });
+    }
+  }, [autoName, nameEdited]);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -111,13 +130,16 @@ export function PresetDialog({
               <Label htmlFor="model-preset-name">Name</Label>
               <Input
                 id="model-preset-name"
+                ref={nameRef}
                 autoFocus
                 value={draft.name}
                 maxLength={80}
                 placeholder="e.g. Deep review"
-                onChange={(event) =>
-                  setDraft((current) => ({ ...current, name: event.target.value }))
-                }
+                onChange={(event) => {
+                  const name = event.target.value;
+                  setNameEdited(true);
+                  setDraft((current) => ({ ...current, name }));
+                }}
                 className="h-8"
               />
             </div>

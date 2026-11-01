@@ -26,7 +26,9 @@ or from the `bb-community` marketplace once listed: `bb plugin install model-pre
 - The same presets are listed at the top of bb's own model picker popover,
   above the provider tabs. Click one, or press `⌥1`–`⌥9` (`Alt+1`–`Alt+9`)
   while the picker is open; plain digits still go to its search box. "Save
-  current…" there opens the new-preset dialog.
+  current" there opens the new-preset dialog.
+- A new preset is named after its model and effort as bb shows them
+  ("Opus 5.5 High") until you type a name of your own.
 - Shortcut: `Mod+Shift+L` opens the menu from the New thread composer; press
   `1`–`9` to apply that preset (keys follow the menu order). It is a bb
   composer command, so you rebind it under Settings → Keyboard ("Open model
