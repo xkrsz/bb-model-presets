@@ -6,12 +6,11 @@ import {
   useRpc,
 } from "@get-bb/plugin-sdk/app";
 import type { Preset, rpcContract } from "@/server";
-import { DEFAULT_SHORTCUT, PRESETS_CHANGED } from "@/shared/constants";
+import { PRESETS_CHANGED } from "@/shared/constants";
 
 interface PresetsState {
   presets: Preset[];
   activePresetId: string | null;
-  shortcut: string;
 }
 
 /** The ordered preset list, kept current via the server's realtime signal. */
@@ -46,7 +45,6 @@ export function usePresets() {
     rpc,
     presets: state?.presets ?? [],
     activePresetId: state?.activePresetId ?? null,
-    shortcut: state?.shortcut ?? DEFAULT_SHORTCUT,
     loaded: state !== null,
     error,
     refetch,

@@ -1,12 +1,12 @@
-// bb-plugin-model-presets — frontend entry.
+// bb-plugin-model-presets: frontend entry.
 //
-// Registers the "Preset" control in the built-in New thread composer, the
-// keyboard shortcut that opens it, and a Presets section on the plugin's
-// settings page.
+// Adds the preset control to the New thread composer (docked beside the model
+// picker), a rebindable "Open model presets" composer command, and a Presets
+// section on the plugin's settings page.
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
 import { PresetAction } from "@/components/preset-menu";
 import { PresetManager } from "@/components/preset-manager";
-import { handleShortcutKeydown } from "@/lib/shortcut";
+import { togglePresetMenu } from "@/lib/menu-registry";
 
 function SettingsPresets() {
   return <PresetManager />;
@@ -19,21 +19,16 @@ export default definePluginApp((app) => {
     actions: [{ id: "picker", component: PresetAction }],
   });
 
-  // The shortcut only does something while a PresetAction is mounted (the
-  // New thread screen); elsewhere the registry is empty and the key passes
-  // through to bb untouched.
-  app.contentScripts.register({
-    id: "preset-shortcut",
-    mount({ signal }) {
-      document.addEventListener("keydown", handleShortcutKeydown, {
-        capture: true,
-        signal,
-      });
-      return () => {
-        document.removeEventListener("keydown", handleShortcutKeydown, {
-          capture: true,
-        });
-      };
+  // bb routes the shortcut to the composer holding the caret (or the focused
+  // pane's composer) and lists the command under Settings → Keyboard, where
+  // the user can rebind it. Outside the New thread composer no menu is
+  // registered and the command does nothing.
+  app.composer.experimental_registerCommand({
+    id: "open-presets",
+    title: "Open model presets",
+    defaultShortcut: { key: "l", mod: true, shift: true },
+    run({ composer }) {
+      togglePresetMenu(composer.key);
     },
   });
 
@@ -41,7 +36,7 @@ export default definePluginApp((app) => {
     id: "presets",
     title: "Presets",
     description:
-      "Presets are applied from the New thread screen. Order sets their number keys; the shortcut below opens the menu.",
+      "Presets are applied from the New thread composer. Order sets their number keys in the menu.",
     component: SettingsPresets,
   });
 });

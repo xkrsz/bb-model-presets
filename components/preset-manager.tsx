@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useComposers, type ComposerSelection } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 import type { Preset, PresetFields } from "@/server";
 import { MAX_PRESETS } from "@/shared/constants";
@@ -6,7 +7,6 @@ import { describePreset, usePresets, useProviderName } from "@/hooks/use-presets
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { PresetDialog } from "@/components/preset-dialog";
-import { ShortcutRecorder } from "@/components/shortcut-recorder";
 import { cn } from "@/lib/utils";
 
 type DialogState = { kind: "create" } | { kind: "edit"; preset: Preset } | null;
@@ -16,8 +16,19 @@ function reportError(cause: unknown) {
 }
 
 /** Ordered preset list with create, edit, delete, and reorder controls. */
-export function PresetManager({ className }: { className?: string }) {
-  const { rpc, presets, loaded, error, refetch, shortcut } = usePresets();
+export function PresetManager({
+  className,
+  seed,
+}: {
+  className?: string;
+  /** Picker values new presets start from; defaults to the New thread composer's. */
+  seed?: ComposerSelection | null;
+}) {
+  const { rpc, presets, loaded, error, refetch } = usePresets();
+  const composers = useComposers();
+  const newThreadSelection =
+    composers.find((composer) => composer.scope.kind === "new-thread")
+      ?.selection ?? null;
   const providerName = useProviderName();
   const [dialog, setDialog] = useState<DialogState>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -153,21 +164,11 @@ export function PresetManager({ className }: { className?: string }) {
           New preset
         </Button>
       </div>
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
-        <div className="min-w-0">
-          <div className="text-sm font-medium text-foreground">Keyboard shortcut</div>
-          <p className="text-xs text-muted-foreground">
-            Opens the preset menu on the New thread screen; then press 1–{MAX_PRESETS}.
-          </p>
-        </div>
-        <ShortcutRecorder
-          value={shortcut}
-          onChange={async (next) => {
-            await rpc.call("shortcut_set", { shortcut: next });
-            refetch();
-          }}
-        />
-      </div>
+      <p className="border-t border-border pt-3 text-xs text-muted-foreground">
+        <span className="font-medium text-foreground">Open model presets</span>{" "}
+        (⌘⇧L / Ctrl+Shift+L by default) opens the menu from the New thread
+        composer. Rebind it under Settings → Keyboard.
+      </p>
       {dialog === null ? null : (
         <PresetDialog
           key={dialog.kind === "edit" ? dialog.preset.id : "create"}
@@ -176,6 +177,7 @@ export function PresetManager({ className }: { className?: string }) {
             if (!open) setDialog(null);
           }}
           editing={dialog.kind === "edit" ? dialog.preset : null}
+          seed={seed ?? newThreadSelection}
           onSave={save}
         />
       )}

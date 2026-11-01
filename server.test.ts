@@ -14,8 +14,13 @@ const fields = {
   instructions: "For reviewing your plans, spawn an Opus 5 subagent.",
 };
 
-function configureContext(threadId: string, model = fields.model) {
+function configureContext(
+  threadId: string,
+  model = fields.model,
+  pluginMetadata: Record<string, string> = {},
+) {
   return {
+    pluginMetadata,
     thread: { id: threadId, title: null, parentThreadId: null, sourceThreadId: null },
     project: { id: "proj_1", kind: "standard" as const, name: "p", gitRemoteUrl: null },
     environment: {
@@ -36,7 +41,15 @@ function configureContext(threadId: string, model = fields.model) {
 }
 
 async function load() {
-  const { bb, harness } = createFakePluginHost({ pluginId: "model-presets" });
+  const { bb, harness } = createFakePluginHost({
+    pluginId: "model-presets",
+    sdk: {
+      threads: {
+        updatePluginMetadata: async () => ({}),
+        getPluginMetadata: async () => ({}),
+      },
+    },
+  });
   await plugin(bb);
   return { bb, harness };
 }
@@ -119,7 +132,7 @@ describe("instruction injection", () => {
     expect(config?.instructions ?? null).toBeNull();
   });
 
-  it("survives a reload with links intact", async () => {
+  it("records the link in thread metadata and resolves it after a reload", async () => {
     const { harness } = await load();
     const preset = (await harness.behavior.callRpc("presets_create", fields)) as Preset;
     await harness.behavior.callRpc("presets_set_active", { id: preset.id });
@@ -127,9 +140,22 @@ describe("instruction injection", () => {
       thread: makeThreadResponse({ id: "th_r", providerId: "claude-code" }),
     });
     await harness.behavior.resolveAgentConfiguration(configureContext("th_r"));
-    await harness.lifecycle.reload(plugin);
-    const config = await harness.behavior.resolveAgentConfiguration(
+    expect(harness.sdk.callsTo("threads.updatePluginMetadata")).toEqual([
+      [
+        expect.objectContaining({
+          threadId: "th_r",
+          set: { presetId: preset.id, presetName: "Deep review" },
+        }),
+      ],
+    ]);
+
+    const reloaded = (await harness.lifecycle.reload(plugin)).harness;
+    const unlinked = await reloaded.behavior.resolveAgentConfiguration(
       configureContext("th_r"),
+    );
+    expect(unlinked?.instructions ?? null).toBeNull();
+    const config = await reloaded.behavior.resolveAgentConfiguration(
+      configureContext("th_r", fields.model, { presetId: preset.id }),
     );
     expect(config?.instructions).toContain(fields.instructions);
   });
@@ -157,35 +183,5 @@ describe("cli", () => {
     expect(listed.stdout).toContain("codex / gpt-5.5 · low · fast");
     const bad = await harness.behavior.runCli(["add", "--name", "x"]);
     expect(bad.exitCode).toBe(1);
-  });
-});
-
-describe("shortcut", () => {
-  it("stores a normalized combo and rejects modifier-less keys", async () => {
-    const { harness } = await load();
-    const initial = (await harness.behavior.callRpc("presets_list", null)) as {
-      shortcut: string;
-    };
-    expect(initial.shortcut).toBe("mod+shift+l");
-    const set = (await harness.behavior.callRpc("shortcut_set", {
-      shortcut: "Shift+Alt+P",
-    })) as { shortcut: string };
-    expect(set.shortcut).toBe("alt+shift+p");
-    await expect(
-      harness.behavior.callRpc("shortcut_set", { shortcut: "l" }),
-    ).rejects.toThrow();
-    await expect(
-      harness.behavior.callRpc("shortcut_set", { shortcut: "shift+l" }),
-    ).rejects.toThrow();
-    const reset = (await harness.behavior.callRpc("shortcut_set", {
-      shortcut: null,
-    })) as { shortcut: string };
-    expect(reset.shortcut).toBe("mod+shift+l");
-    await harness.behavior.callRpc("shortcut_set", { shortcut: "mod+alt+k" });
-    await harness.lifecycle.reload(plugin);
-    const after = (await harness.behavior.callRpc("presets_list", null)) as {
-      shortcut: string;
-    };
-    expect(after.shortcut).toBe("mod+alt+k");
   });
 });

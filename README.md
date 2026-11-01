@@ -19,19 +19,22 @@ or from the `bb-community` marketplace once listed: `bb plugin install model-pre
 
 ## Using it
 
-- A **Preset** button sits in the New thread composer's action row. It opens a
-  numbered menu of presets, plus "New preset from current selection…" and
-  "Manage presets…" (reorder, edit, delete).
-- **Shortcut:** `Mod+Shift+L` by default opens the menu on the New thread
-  screen; press `1`–`9` to apply that preset (keys follow the menu order). Change
-  it from the plugin's Settings page or the Manage presets dialog: click the
-  shortcut control, press the new combination, done (Esc cancels, the arrow
-  button resets). Combos need ⌘/Ctrl or ⌥/Alt; the control warns when a combo
-  is one of bb's defaults.
-- Applying a preset sets the composer's provider/model/effort/speed, exactly as
-  if you had picked them in the native picker. Thread instructions are injected
-  by the server when the thread starts, provided the thread really runs the
-  preset's provider + model (so changing the model by hand afterwards opts out).
+- A preset button sits right after the model and effort pickers in the New
+  thread composer. It shows the preset that matches the current selection and
+  opens a numbered menu of presets, plus "New preset from current selection…"
+  and "Manage presets…" (reorder, edit, delete).
+- Shortcut: `Mod+Shift+L` opens the menu from the New thread composer; press
+  `1`–`9` to apply that preset (keys follow the menu order). It is a bb
+  composer command, so you rebind it under Settings → Keyboard ("Open model
+  presets"). If the default collides with another binding, bb leaves it
+  unbound until you pick one.
+- Applying a preset calls the composer's `setSelection`, the same path the
+  native pickers use. If the composer can't offer the preset's provider or
+  model (provider not installed, model gone), a toast says so and nothing is
+  marked active.
+- Thread instructions are injected by the server when the thread starts,
+  provided the thread really runs the preset's provider + model (so changing
+  the model by hand afterwards opts out).
 - The plugin's settings page also lists and manages presets.
 
 CLI (for you or agents):
@@ -40,30 +43,34 @@ CLI (for you or agents):
 bb model-presets list [--json]
 bb model-presets show <id|name>
 bb model-presets thread [<thread-id>]      # which preset a thread was started with
-bb model-presets add --name "Deep review" --provider claude-code --model claude-fable-5 --effort high --speed fast --instructions "…"
+bb model-presets add --name "Deep review" --provider claude-code --model claude-opus-5-5 --effort high --speed fast --instructions "…"
 bb model-presets remove <id>
 ```
 
 ## How it works
 
 - `server.ts` stores presets (ordered) in `bb.storage.kv`, exposes them over
-  plugin RPC, and uses `bb.agents.configure` to append a preset's instructions to
-  new threads. `thread.created` marks a thread as new; the first configuration
-  resolution links it to the active preset when provider + model match, and the
-  link persists so later turns keep the same instructions.
-- `lib/composer-preferences.ts` drives the built-in composer by writing bb's own
-  remembered-selection localStorage keys (`bb.promptbox.*`) and dispatching
-  `storage` events, which the composer's jotai atoms subscribe to. This is an
-  internal bb contract (storage version `1`); if the composer changes how it
-  persists selections, update that file.
-- `lib/shortcut.ts` + a content script own the global keydown listener; the
-  composer action registers itself as the shortcut target while mounted.
+  plugin RPC, and uses `bb.agents.configure` to append a preset's instructions
+  to new threads. `thread.created` marks a thread as new; the first
+  configuration resolution links it to the active preset when provider + model
+  match. The link goes into the thread's plugin metadata
+  (`presetId`, `presetName`), which bb hands back to `configure` on later
+  turns and keeps after restarts. Links written by 0.1.x to kv are still read.
+- `components/preset-menu.tsx` reads and writes the selection through
+  `useComposer()`. bb has no plugin slot inside the picker group, so
+  `lib/picker-dock.ts` finds that group through the bundled composer's
+  `data-promptbox-*` attributes and portals the button into it. When the
+  markup isn't there (compact layout, another composer plugin, a bb change)
+  the button stays in the regular plugin action slot next to send.
+- `app.tsx` registers the "Open model presets" composer command; bb routes it
+  to the focused composer and `lib/menu-registry.ts` opens that composer's
+  menu.
 
 ## Development
 
 ```
-git clone https://github.com/xkrsz/bb-model-presets ~/src/bb-model-presets
-cd ~/src/bb-model-presets
+git clone https://github.com/xkrsz/bb-model-presets ~/src/xkrsz/bb-model-presets
+cd ~/src/xkrsz/bb-model-presets
 npm install --include=dev
 bb plugin install .        # run from this checkout
 bb plugin dev              # rebuild + reload on save

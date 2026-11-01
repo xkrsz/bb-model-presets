@@ -7,26 +7,22 @@
 import { randomUUID } from "node:crypto";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { parseShortcut, serializeShortcut } from "./lib/shortcut";
 import {
-  DEFAULT_SHORTCUT,
   MAX_INSTRUCTIONS_LENGTH,
   MAX_PRESETS,
   PRESETS_CHANGED,
-  REASONING_LEVELS,
-  SERVICE_TIERS,
 } from "./shared/constants";
 
-export const reasoningLevelSchema = z.enum(REASONING_LEVELS);
-export const serviceTierSchema = z.enum(SERVICE_TIERS);
+/** Providers declare their own levels and tiers ("high", "xhigh", "fast", ...). */
+const providerOptionSchema = z.string().trim().min(1).max(40);
 
 export const presetFieldsSchema = z.object({
   name: z.string().trim().min(1).max(80),
   providerId: z.string().trim().min(1),
   model: z.string().trim().min(1),
-  reasoningLevel: reasoningLevelSchema,
+  reasoningLevel: providerOptionSchema,
   /** null when the provider has no service tiers (or the user left it alone). */
-  serviceTier: serviceTierSchema.nullable(),
+  serviceTier: providerOptionSchema.nullable(),
   /** Appended to the agent instructions of every thread started with this preset. */
   instructions: z.string().max(MAX_INSTRUCTIONS_LENGTH),
 });
@@ -38,34 +34,9 @@ export const presetSchema = presetFieldsSchema.extend({
 export type Preset = z.infer<typeof presetSchema>;
 export type PresetFields = z.infer<typeof presetFieldsSchema>;
 
-/**
- * "mod+shift+l" style combo. Must carry mod (⌘/Ctrl) or alt so a plain key
- * can never hijack typing in the composer.
- */
-export const shortcutSchema = z
-  .string()
-  .trim()
-  .max(40)
-  .transform((value, ctx) => {
-    const parsed = parseShortcut(value);
-    if (parsed === null) {
-      ctx.addIssue({ code: "custom", message: "Unrecognised shortcut." });
-      return z.NEVER;
-    }
-    if (!parsed.mod && !parsed.alt) {
-      ctx.addIssue({
-        code: "custom",
-        message: "Shortcut needs a ⌘/Ctrl or ⌥/Alt modifier.",
-      });
-      return z.NEVER;
-    }
-    return serializeShortcut(parsed);
-  });
-
 const presetListOutput = z.object({
   presets: z.array(presetSchema),
   activePresetId: z.string().nullable(),
-  shortcut: z.string(),
 });
 
 export const rpcContract = defineRpcContract({
@@ -87,26 +58,26 @@ export const rpcContract = defineRpcContract({
     input: z.object({ id: z.string().nullable() }),
     output: z.object({ activePresetId: z.string().nullable() }),
   },
-  shortcut_set: {
-    /** null restores the default. */
-    input: z.object({ shortcut: shortcutSchema.nullable() }),
-    output: z.object({ shortcut: z.string() }),
-  },
 });
 
 const KV_PRESETS = "presets";
 const KV_ACTIVE = "active-preset-id";
-const KV_THREAD_LINKS = "thread-links";
-const KV_SHORTCUT = "shortcut";
+/** Links from 0.1.x, before they moved into thread metadata. Read-only now. */
+const KV_LEGACY_THREAD_LINKS = "thread-links";
 
 /** Threads must have been created this recently to auto-link to the active preset. */
 const NEW_THREAD_WINDOW_MS = 10 * 60 * 1000;
-const MAX_THREAD_LINKS = 1000;
 
 interface ThreadPresetLink {
   presetId: string;
   at: number;
 }
+
+/** What the plugin stores in each linked thread's metadata. */
+const threadMetadataSchema = z.object({
+  presetId: z.string(),
+  presetName: z.string().optional(),
+});
 
 export function formatPresetInstructions(preset: Preset): string | null {
   const body = preset.instructions.trim();
@@ -117,19 +88,18 @@ export function formatPresetInstructions(preset: Preset): string | null {
 export default async function plugin(bb: BbPluginApi) {
   // --- state -------------------------------------------------------------
   // `bb.agents.configure` is synchronous, so everything it needs lives in
-  // memory and is written through to kv.
+  // memory and is written through to kv. Thread → preset links live in the
+  // thread's plugin metadata, which `configure` receives with each call;
+  // `threadLinks` covers the moment between linking and that write landing.
   let presets: Preset[] = parsePresets(
     await bb.storage.kv.get<unknown>(KV_PRESETS),
   );
   let activePresetId: string | null =
     (await bb.storage.kv.get<string | null>(KV_ACTIVE)) ?? null;
-  let shortcut: string =
-    shortcutSchema.safeParse(await bb.storage.kv.get<string>(KV_SHORTCUT))
-      .data ?? DEFAULT_SHORTCUT;
   const threadLinks = new Map<string, ThreadPresetLink>(
     Object.entries(
       (await bb.storage.kv.get<Record<string, ThreadPresetLink>>(
-        KV_THREAD_LINKS,
+        KV_LEGACY_THREAD_LINKS,
       )) ?? {},
     ),
   );
@@ -155,18 +125,25 @@ export default async function plugin(bb: BbPluginApi) {
     await bb.storage.kv.set(KV_ACTIVE, activePresetId);
     bb.realtime.publish(PRESETS_CHANGED, { count: presets.length });
   }
-  function persistThreadLinks(): void {
-    if (threadLinks.size > MAX_THREAD_LINKS) {
-      const oldest = [...threadLinks.entries()]
-        .sort((a, b) => a[1].at - b[1].at)
-        .slice(0, threadLinks.size - MAX_THREAD_LINKS);
-      for (const [threadId] of oldest) threadLinks.delete(threadId);
-    }
-    bb.storage.kv
-      .set(KV_THREAD_LINKS, Object.fromEntries(threadLinks))
+  function linkThread(threadId: string, preset: Preset): void {
+    threadLinks.set(threadId, { presetId: preset.id, at: Date.now() });
+    bb.sdk.threads
+      .updatePluginMetadata({
+        threadId,
+        set: { presetId: preset.id, presetName: preset.name },
+      })
       .catch((error: unknown) => {
-        bb.log.warn(`failed to persist thread links: ${String(error)}`);
+        bb.log.warn(`failed to record preset on ${threadId}: ${String(error)}`);
       });
+  }
+  function linkedPresetId(
+    threadId: string,
+    metadata: unknown,
+  ): string | undefined {
+    return (
+      threadMetadataSchema.safeParse(metadata).data?.presetId ??
+      threadLinks.get(threadId)?.presetId
+    );
   }
 
   function getPreset(id: string): Preset | undefined {
@@ -233,12 +210,6 @@ export default async function plugin(bb: BbPluginApi) {
     await persistPresets();
     return presets;
   }
-  async function setShortcut(next: string | null): Promise<string> {
-    shortcut = next ?? DEFAULT_SHORTCUT;
-    await bb.storage.kv.set(KV_SHORTCUT, shortcut);
-    bb.realtime.publish(PRESETS_CHANGED, { count: presets.length });
-    return shortcut;
-  }
   async function setActive(id: string | null): Promise<string | null> {
     if (id !== null && getPreset(id) === undefined) {
       throw new Error(`No preset with id ${id}`);
@@ -250,16 +221,13 @@ export default async function plugin(bb: BbPluginApi) {
 
   // --- rpc -----------------------------------------------------------------
   bb.rpc.register(rpcContract, {
-    presets_list: () => ({ presets, activePresetId, shortcut }),
+    presets_list: () => ({ presets, activePresetId }),
     presets_create: (fields) => createPreset(fields),
     presets_update: ({ id, ...fields }) => updatePreset(id, fields),
     presets_delete: async ({ id }) => ({ removed: await deletePreset(id) }),
     presets_reorder: async ({ ids }) => ({ presets: await reorderPresets(ids) }),
     presets_set_active: async ({ id }) => ({
       activePresetId: await setActive(id),
-    }),
-    shortcut_set: async ({ shortcut: next }) => ({
-      shortcut: await setShortcut(next),
     }),
   });
 
@@ -276,7 +244,7 @@ export default async function plugin(bb: BbPluginApi) {
   });
   bb.events.on("thread.deleted", ({ thread }) => {
     recentlyCreated.delete(thread.id);
-    if (threadLinks.delete(thread.id)) persistThreadLinks();
+    threadLinks.delete(thread.id);
   });
 
   bb.agents.configure((context) => {
@@ -290,12 +258,13 @@ export default async function plugin(bb: BbPluginApi) {
   });
 
   function resolvePresetForThread(context: {
+    pluginMetadata: unknown;
     thread: { id: string };
     provider: { id: string; model: string };
     origin: { kind: "fork" | null };
   }): Preset | null {
-    const linked = threadLinks.get(context.thread.id);
-    if (linked !== undefined) return getPreset(linked.presetId) ?? null;
+    const linked = linkedPresetId(context.thread.id, context.pluginMetadata);
+    if (linked !== undefined) return getPreset(linked) ?? null;
     if (context.origin.kind === "fork") return null;
     const active = activePreset();
     if (active === null) return null;
@@ -311,9 +280,8 @@ export default async function plugin(bb: BbPluginApi) {
     ) {
       return null;
     }
-    threadLinks.set(context.thread.id, { presetId: active.id, at: Date.now() });
     recentlyCreated.delete(context.thread.id);
-    persistThreadLinks();
+    linkThread(context.thread.id, active);
     return active;
   }
 
@@ -323,7 +291,7 @@ export default async function plugin(bb: BbPluginApi) {
     "  bb model-presets list [--json]",
     "  bb model-presets show <id|name> [--json]",
     "  bb model-presets thread [<thread-id>] [--json]",
-    "  bb model-presets add --name <name> --provider <id> --model <model> [--effort <level>] [--speed default|fast] [--instructions <text>] [--json]",
+    "  bb model-presets add --name <name> --provider <id> --model <model> [--effort <level>] [--speed <tier>] [--instructions <text>] [--json]",
     "  bb model-presets remove <id> [--json]",
     "",
     "Presets are applied from the New thread screen; the CLI only manages them.",
@@ -387,7 +355,7 @@ export default async function plugin(bb: BbPluginApi) {
         name: "add",
         summary: "Create a preset",
         usage:
-          "bb model-presets add --name <name> --provider <id> --model <model> [--effort <level>] [--speed default|fast] [--instructions <text>] [--json]",
+          "bb model-presets add --name <name> --provider <id> --model <model> [--effort <level>] [--speed <tier>] [--instructions <text>] [--json]",
       },
       {
         name: "remove",
@@ -409,7 +377,7 @@ export default async function plugin(bb: BbPluginApi) {
           return { exitCode: 0, stdout: usage };
         case "list":
           return reply(
-            { presets, activePresetId, shortcut },
+            { presets, activePresetId },
             presets.length === 0
               ? "No presets yet. Create one from the New thread screen."
               : presets.map(formatPreset).join("\n"),
@@ -434,8 +402,12 @@ export default async function plugin(bb: BbPluginApi) {
               stderr: "Pass a thread id (none could be inferred).",
             };
           }
-          const link = threadLinks.get(threadId);
-          const preset = link === undefined ? null : (getPreset(link.presetId) ?? null);
+          const metadata = await bb.sdk.threads
+            .getPluginMetadata({ threadId })
+            .catch(() => ({}));
+          const presetId = linkedPresetId(threadId, metadata);
+          const preset =
+            presetId === undefined ? null : (getPreset(presetId) ?? null);
           return reply(
             { threadId, preset },
             preset === null

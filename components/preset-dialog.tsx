@@ -2,11 +2,11 @@ import { useState } from "react";
 import type { FormEvent } from "react";
 import {
   experimental_ProviderModelPicker as ProviderModelPicker,
+  type ComposerSelection,
   type ExperimentalProviderModelPickerValue,
 } from "@get-bb/plugin-sdk/app";
 import type { Preset, PresetFields } from "@/server";
 import { MAX_INSTRUCTIONS_LENGTH } from "@/shared/constants";
-import { readComposerSelection } from "@/lib/composer-preferences";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -20,14 +20,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
-function emptyDraft(): PresetFields {
-  const current = readComposerSelection();
+function emptyDraft(seed: ComposerSelection | null): PresetFields {
   return {
     name: "",
-    providerId: current?.providerId ?? "",
-    model: current?.model ?? "",
-    reasoningLevel: current?.reasoningLevel ?? "medium",
-    serviceTier: current?.serviceTier ?? null,
+    providerId: seed?.providerId ?? "",
+    model: seed?.model ?? "",
+    reasoningLevel: seed?.reasoningLevel ?? "medium",
+    serviceTier: seed?.serviceTier ?? null,
     instructions: "",
   };
 }
@@ -47,16 +46,19 @@ export function PresetDialog({
   open,
   onOpenChange,
   editing,
+  seed = null,
   onSave,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** null creates a new preset seeded from the composer's current selection. */
   editing: Preset | null;
+  /** Composer picker values a new preset starts from. */
+  seed?: ComposerSelection | null;
   onSave: (fields: PresetFields) => Promise<void>;
 }) {
   const [draft, setDraft] = useState<PresetFields>(() =>
-    editing === null ? emptyDraft() : draftFromPreset(editing),
+    editing === null ? emptyDraft(seed) : draftFromPreset(editing),
   );
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);

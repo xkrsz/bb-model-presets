@@ -1,4 +1,3 @@
-/* shadcn/ui-derived */
 import * as React from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { Slot } from "@radix-ui/react-slot";
@@ -19,10 +18,6 @@ import {
   preventOverlayTriggerSelection,
 } from "./overlay-trigger.js";
 import { Icon } from "../../components/ui/icon.js";
-
-// ---------------------------------------------------------------------------
-// Context — separate instance from DropdownMenu / Popover.
-// ---------------------------------------------------------------------------
 
 interface ResponsiveDialogContextValue extends ResponsiveOverlayContextValue {
   titleId: string;
@@ -45,10 +40,6 @@ const ResponsiveDialogContext =
 function useResponsiveDialog() {
   return React.useContext(ResponsiveDialogContext);
 }
-
-// ---------------------------------------------------------------------------
-// Root
-// ---------------------------------------------------------------------------
 
 function Dialog({
   children,
@@ -113,10 +104,6 @@ function Dialog({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Trigger
-// ---------------------------------------------------------------------------
-
 const DialogTrigger = React.forwardRef<
   HTMLButtonElement,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Trigger>
@@ -158,10 +145,6 @@ const DialogTrigger = React.forwardRef<
 });
 DialogTrigger.displayName = "DialogTrigger";
 
-// ---------------------------------------------------------------------------
-// Close — closes the dialog/drawer. Works in both modes.
-// ---------------------------------------------------------------------------
-
 interface DialogCloseProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   asChild?: boolean;
 }
@@ -201,19 +184,12 @@ const DialogClose = React.forwardRef<HTMLButtonElement, DialogCloseProps>(
 );
 DialogClose.displayName = "DialogClose";
 
-// ---------------------------------------------------------------------------
-// Overlay — desktop only. Kept for backwards compatibility; the drawer
-// provides its own overlay on mobile.
-// ---------------------------------------------------------------------------
-
 const DialogOverlay = React.forwardRef<
   React.ComponentRef<typeof DialogPrimitive.Overlay>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Overlay>
 >(({ className, ...props }, ref) => (
   <DialogPrimitive.Overlay
     ref={ref}
-    // Portaled outside every plugin mount; re-attach the plugin CSS scope
-    // when rendered from a plugin slot (see portal-scope.ts).
     {...usePortalScopeProps()}
     className={cn(
       "fixed inset-0 z-50 bg-black/40 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
@@ -224,50 +200,86 @@ const DialogOverlay = React.forwardRef<
 ));
 DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
 
-// ---------------------------------------------------------------------------
-// Content
-// ---------------------------------------------------------------------------
+function useChildrenRetainedWhileClosing(
+  open: boolean,
+  children: React.ReactNode,
+) {
+  const [wasOpen, setWasOpen] = React.useState(open);
+  const [closing, setClosing] = React.useState(false);
+  const [lastOpenChildren, setLastOpenChildren] =
+    React.useState<React.ReactNode>(open ? children : null);
+  if (wasOpen !== open) {
+    setWasOpen(open);
+    setClosing(!open);
+  }
+  if (open && lastOpenChildren !== children) setLastOpenChildren(children);
+  const finishClosing = React.useCallback(() => {
+    setClosing(false);
+    setLastOpenChildren(null);
+  }, []);
+  return {
+    content: !open && closing ? lastOpenChildren : children,
+    finishClosing,
+  };
+}
 
 type DialogContentProps = React.ComponentPropsWithoutRef<
   typeof DialogPrimitive.Content
 > & {
-  /**
-   * Drop the corner close button, for content that occupies that corner.
-   * Escape and the overlay still close the dialog.
-   */
+  onAfterCloseAutoFocus?: () => void;
   hideCloseButton?: boolean;
+  compactContentClassName?: string;
 };
 
 const DialogContent = React.forwardRef<HTMLDivElement, DialogContentProps>(
-  ({ className, children, hideCloseButton = false, ...props }, ref) => {
+  (
+    {
+      className,
+      children,
+      hideCloseButton = false,
+      compactContentClassName,
+      onAfterCloseAutoFocus,
+      onCloseAutoFocus,
+      ...props
+    },
+    ref,
+  ) => {
     const { isCompactViewport, open, onOpenChange, titleId, descriptionId } =
       useResponsiveDialog();
     useBrowserDimmingModal(open);
-    // Unconditional (rules of hooks — the compact branch returns early); the
-    // compact drawer path is covered by the persistent drawer shell.
     const scopeProps = usePortalScopeProps();
+    const { content, finishClosing } = useChildrenRetainedWhileClosing(
+      open,
+      children,
+    );
 
     if (isCompactViewport) {
       const domProps = stripRadixContentProps(props);
       return (
         <ResponsiveDrawerShell
           open={open}
+          contentClassName={compactContentClassName}
           onOpenChange={onOpenChange}
+          onAfterCloseAutoFocus={onAfterCloseAutoFocus}
+          onContentAnimationEnd={(settledOpen) => {
+            if (!settledOpen) finishClosing();
+          }}
+          onEscapeKeyDown={props.onEscapeKeyDown}
+          onPointerDownOutside={props.onPointerDownOutside}
+          onInteractOutside={props.onInteractOutside}
           labelledBy={titleId}
           describedBy={descriptionId}
         >
           <div
             ref={ref}
             className={cn(
-              "grid grid-cols-[minmax(0,1fr)] gap-4 overflow-y-auto px-4 pt-2 pb-[max(1rem,env(safe-area-inset-bottom))]",
+              "grid grid-cols-[minmax(0,1fr)] gap-4 overflow-y-auto px-4 pt-2 pb-4",
               className,
-              // The drawer spans the full viewport width; ignore any desktop
-              // max-width override a caller passes so content fills the drawer.
               "max-w-none",
             )}
             {...domProps}
           >
-            {children}
+            {content}
           </div>
         </ResponsiveDrawerShell>
       );
@@ -279,13 +291,18 @@ const DialogContent = React.forwardRef<HTMLDivElement, DialogContentProps>(
         <DialogPrimitive.Content
           ref={ref}
           {...scopeProps}
+          onCloseAutoFocus={(event) => {
+            finishClosing();
+            onCloseAutoFocus?.(event);
+            queueMicrotask(() => onAfterCloseAutoFocus?.());
+          }}
           className={cn(
             "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg grid-cols-[minmax(0,1fr)] translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-sm duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 sm:rounded-lg",
             className,
           )}
           {...props}
         >
-          {children}
+          {content}
           {hideCloseButton ? null : (
             <DialogPrimitive.Close className="absolute right-4 top-4 cursor-pointer rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-state-active data-[state=open]:text-foreground">
               <Icon name="X" className="h-4 w-4" />
@@ -298,10 +315,6 @@ const DialogContent = React.forwardRef<HTMLDivElement, DialogContentProps>(
   },
 );
 DialogContent.displayName = "DialogContent";
-
-// ---------------------------------------------------------------------------
-// Header / Footer — layout primitives, unchanged.
-// ---------------------------------------------------------------------------
 
 const DialogHeader = ({
   className,
@@ -320,18 +333,13 @@ const DialogFooter = ({
 }: React.HTMLAttributes<HTMLDivElement>) => (
   <div
     className={cn(
-      "flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2",
+      "flex flex-col-reverse gap-2 sm:flex-row sm:justify-end",
       className,
     )}
     {...props}
   />
 );
 DialogFooter.displayName = "DialogFooter";
-
-// ---------------------------------------------------------------------------
-// Title / Description — use plain elements on mobile. The persistent drawer
-// links its dialog semantics to these stable IDs.
-// ---------------------------------------------------------------------------
 
 const DialogTitle = React.forwardRef<
   HTMLHeadingElement,
